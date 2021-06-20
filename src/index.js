@@ -3,6 +3,8 @@ const http = require('http')
 const path = require('path')
 const socketio = require('socket.io')
 const Filter = require('bad-words')
+const { generateMessage } = require('./utils/messages')
+const { addUser, removeUser, getUser, getUsersInRoom } = require('./utils/users')
 
 const app = express()
 const server = http.createServer(app)
@@ -19,10 +21,27 @@ io.on('connection', (socket) => {
     // io is like the whole connection object, can be used to work with all clients as a whole
 
     // emitting events
-    socket.emit('message', 'Welcome moon walker!')
+    // socket.emit('message', generateMessage('Welcome moon walker!'))
 
     // broadcasting means emit to all except the current socket connection
-    socket.broadcast.emit('message', 'A new user has joined!')
+    // socket.broadcast.emit('message', generateMessage('A new user has joined!'))
+
+    socket.on('join', ({ username, room}, callback) => {
+        // makes user join the specific room
+        const { error, user } = addUser({ id: socket.id, username, room })
+
+        if (error) {
+            return callback(error)
+        }
+        socket.join(user.room)
+        socket.emit('message', generateMessage('Admin', `Welcome ${user.username}!`))
+        socket.broadcast.to(user.room).emit('message', generateMessage('Admin', `${user.username} has joined!`))
+        io.to(user.room).emit('roomData', {
+            room: user.room,
+            users: getUsersInRoom(user.room)
+        })
+        callback()
+    })
 
     // catching events
     // callback parameter is used to send acknlowdgements
@@ -31,18 +50,28 @@ io.on('connection', (socket) => {
         if (filter.isProfane(message)){
             return callback('Profanity is unacceptable!')
         }
-        io.emit('message', message)
+
+        const user = getUser(socket.id)
+        io.to(user.room).emit('message', generateMessage(user.username, message))
         callback()
     })
 
     // socket calls this automatically when the client connection is disconnected
     socket.on('disconnect', () => {
-        io.emit('message', 'A user has disconnected!')
+        const user = removeUser(socket.id)
+        if (user) {
+            io.to(user.room).emit('message', generateMessage('Admin', `${user.username} has disconnected!`))
+            io.to(user.room).emit('roomData', {
+                room: user.room,
+                users: getUsersInRoom(user.room)
+            })        
+        }
     })
 
     // Receiving location and broadcasting to all.
     socket.on('emitLocation', (location, callback) => {
-        io.emit('message', `https://www.google.com/maps/@${location.latitude},${location.longitude}`)
+        const user = getUser(socket.id)
+        io.to(user.room).emit('locationMessage', generateMessage(user.username, `https://www.google.com/maps/@${location.latitude},${location.longitude}`))
         callback()
     })
 })
